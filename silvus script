@@ -1,0 +1,445 @@
+import customtkinter as ctk
+import paramiko
+import time
+import re
+import threading
+import json
+
+class StreamCasterApp(ctk.CTk):
+    def __init__(self):
+        super().__init__()
+
+        self.title("StreamCaster Radio Control")
+        self.geometry("600x800")
+
+        self.ssh = None
+        self.shell = None
+
+        self.bandwidth_options = ["5", "10", "20"]
+        self.encryption_options = ["On", "Off"]
+        self.power_options = ["High", "Medium", "Low", "Enable Max Power"]
+        self.power_map = {"High": "20", "Medium": "16", "Low": "13", "Enable Max Power": "1"}
+
+        self.create_login_frame()
+
+    def create_login_frame(self):
+        self.login_frame = ctk.CTkFrame(self)
+        self.login_frame.pack(pady=20, padx=20, fill='both', expand=True)
+
+        ctk.CTkLabel(self.login_frame, text="StreamCaster Login").pack(pady=12, padx=10)
+
+        self.host_entry = ctk.CTkEntry(self.login_frame, placeholder_text="Host")
+        self.host_entry.pack(pady=12, padx=10)
+
+        self.username_entry = ctk.CTkEntry(self.login_frame, placeholder_text="Username")
+        self.username_entry.pack(pady=12, padx=10)
+
+        self.password_entry = ctk.CTkEntry(self.login_frame, placeholder_text="Password", show="*")
+        self.password_entry.pack(pady=12, padx=10)
+
+        self.login_button = ctk.CTkButton(self.login_frame, text="Login", command=self.login)
+        self.login_button.pack(pady=12, padx=10)
+
+        self.status_label = ctk.CTkLabel(self.login_frame, text="")
+        self.status_label.pack(pady=12, padx=10)
+
+    def create_control_frame(self):
+        self.login_frame.pack_forget()
+        self.control_frame = ctk.CTkFrame(self)
+        self.control_frame.pack(pady=20, padx=20, fill='both', expand=True)
+
+        ctk.CTkLabel(self.control_frame, text="Radio Control").pack(pady=12, padx=10)
+
+        # Create a frame for the left side (current configuration)
+        left_frame = ctk.CTkFrame(self.control_frame)
+        left_frame.pack(side="left", fill="y", padx=(0, 10))
+
+        # Add Current Configuration section to the left frame
+        self.get_config_button = ctk.CTkButton(left_frame, text="Get Current Configuration",
+                                               command=self.get_current_config)
+        self.get_config_button.pack(pady=12, padx=10)
+
+        self.config_text = ctk.CTkTextbox(left_frame, height=200, width=200, state="disabled")
+        self.config_text.pack(pady=12, padx=10)
+
+        # Create a frame for the right side (controls)
+        right_frame = ctk.CTkFrame(self.control_frame)
+        right_frame.pack(side="right", fill="both", expand=True)
+
+        # Add controls to the right frame
+        ctk.CTkLabel(right_frame, text="Frequency (MHz)").pack(pady=(12, 0), padx=10)
+        self.freq_entry = ctk.CTkEntry(right_frame, placeholder_text="Enter frequency")
+        self.freq_entry.pack(pady=(0, 12), padx=10)
+
+        self.set_freq_button = ctk.CTkButton(right_frame, text="Set Frequency", command=self.set_frequency)
+        self.set_freq_button.pack(pady=12, padx=10)
+
+        ctk.CTkLabel(right_frame, text="Bandwidth").pack(pady=(12, 0), padx=10)
+        self.bandwidth_dropdown = ctk.CTkOptionMenu(right_frame, values=self.bandwidth_options)
+        self.bandwidth_dropdown.pack(pady=(0, 12), padx=10)
+
+        self.set_bandwidth_button = ctk.CTkButton(right_frame, text="Set Bandwidth", command=self.set_bandwidth)
+        self.set_bandwidth_button.pack(pady=12, padx=10)
+
+        ctk.CTkLabel(right_frame, text="Encryption").pack(pady=(12, 0), padx=10)
+        self.encryption_dropdown = ctk.CTkOptionMenu(right_frame, values=self.encryption_options)
+        self.encryption_dropdown.pack(pady=(0, 12), padx=10)
+
+        self.set_encryption_button = ctk.CTkButton(right_frame, text="Set Encryption", command=self.set_encryption)
+        self.set_encryption_button.pack(pady=12, padx=10)
+
+        ctk.CTkLabel(right_frame, text="Max Link Distance (meters)").pack(pady=(12, 0), padx=10)
+        self.distance_entry = ctk.CTkEntry(right_frame, placeholder_text="Distance in meters")
+        self.distance_entry.pack(pady=(0, 12), padx=10)
+
+        self.set_distance_button = ctk.CTkButton(right_frame, text="Set Max Link Distance",
+                                                 command=self.set_max_link_distance)
+        self.set_distance_button.pack(pady=12, padx=10)
+
+        ctk.CTkLabel(right_frame, text="Transmit Power").pack(pady=(12, 0), padx=10)
+        self.power_dropdown = ctk.CTkOptionMenu(right_frame, values=self.power_options)
+        self.power_dropdown.pack(pady=(0, 12), padx=10)
+
+        self.set_power_button = ctk.CTkButton(right_frame, text="Set Transmit Power", command=self.set_power)
+        self.set_power_button.pack(pady=12, padx=10)
+
+        self.status_label = ctk.CTkLabel(self.control_frame, text="")
+        self.status_label.pack(pady=12, padx=10)
+
+    def login(self):
+        global hostname
+        hostname = self.host_entry.get()
+        username = self.username_entry.get()
+        password = self.password_entry.get()
+
+        self.status_label.configure(text="Connecting...")
+        self.login_button.configure(state="disabled")
+
+        def connect():
+            try:
+                self.ssh = paramiko.SSHClient()
+                self.ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                self.ssh.connect(hostname, username=username, password=password)
+                self.shell = self.ssh.invoke_shell()
+                time.sleep(2)
+                self.shell.recv(1000)  # Clear initial output
+                self.status_label.configure(text="Connected successfully!")
+                self.after(1000, self.create_control_frame)
+            except Exception as e:
+                self.status_label.configure(text=f"Connection failed: {str(e)}")
+                self.login_button.configure(state="normal")
+                self.ssh = None
+                self.shell = None
+
+        threading.Thread(target=connect, daemon=True).start()
+
+    def get_current_config(self):
+        self.status_label.configure(text="Retrieving current configuration...")
+        self.get_config_button.configure(state="disabled")
+        self.config_text.configure(state="normal")
+        self.config_text.delete("1.0", ctk.END)
+        self.config_text.configure(state="disabled")
+
+        def retrieve_config():
+            try:
+                # Get current frequency
+                set_freq = self.shell.send(f"api {hostname} freq ")
+                print(set_freq)
+
+                # Get current bandwidth
+                set_bw = self.shell.send(f"api {hostname} bw ")
+                print(set_bw)
+
+                # Get current power
+                set_power = self.shell.send(f"api {hostname} power_dBm")
+                print(set_power)
+
+                #get current encryption
+                set_encrypt = self.shell.send(f"api {hostname} enc_disable")
+                print(set_encrypt)
+
+                #get current link distance
+                set_distance = self.shell.send(f"api {hostname} max_link_distance")
+                print(set_distance)
+
+
+
+                config_text = f" Set Frequency: {set_freq} MHz\n"
+                #config_text += f"Set Bandwidth: {set_bw} MHz\n"
+                #config_text += f"Set Transmit Power: {set_power} dBm\n"
+                #config_text += f"Encryption State: {set_encrypt}\n"
+                #config_text += f" Set Link Distance: {set_distance} Meters"
+
+                self.config_text.configure(state="normal")
+                self.config_text.delete("1.0", ctk.END)
+                self.config_text.insert("1.0", config_text)
+                self.config_text.configure(state="disabled")
+
+                self.status_label.configure(text="Configuration retrieved successfully")
+            except Exception as e:
+                self.status_label.configure(text=f"Error: {str(e)}")
+            finally:
+                self.get_config_button.configure(state="normal")
+
+        threading.Thread(target=retrieve_config, daemon=True).start()
+
+    def set_frequency(self):
+        new_freq = self.freq_entry.get()
+        self.status_label.configure(text="Setting frequency...")
+        self.set_freq_button.configure(state="disabled")
+
+        def send_command():
+            try:
+                api_command = f"api {hostname} freq '[\"{new_freq}\"]'\n"
+                self.shell.send(api_command)
+                time.sleep(2)
+                output = ""
+                while self.shell.recv_ready():
+                    output += self.shell.recv(1000).decode()
+
+                lines = output.strip().split('\n')
+                for line in lines:
+                    line = line.strip()
+                    if line:
+                        if line == '[""]':
+                            self.status_label.configure(text=f"Frequency set to {new_freq} MHz.")
+                            break
+                        elif re.match(r'\["\d+(\.\d+)?"\]', line):
+                            current_freq = re.findall(r'\d+(\.\d+)?', line)[0]
+                            self.status_label.configure(text=f"Current frequency: {current_freq} MHz")
+                            break
+                        elif "error" in line.lower():
+                            self.status_label.configure(text=f"Error: {line}")
+                            break
+                else:
+                    self.status_label.configure(text=f'Frequency set to {new_freq} MHz')
+            except Exception as e:
+                self.status_label.configure(text=f"Error: {str(e)}")
+            finally:
+                self.set_freq_button.configure(state="normal")
+
+        threading.Thread(target=send_command, daemon=True).start()
+
+    def set_bandwidth(self):
+        new_bw = self.bw_dropdown.get()
+        self.status_label.configure(text="Setting bandwidth...")
+        self.set_bw_button.configure(state="disabled")
+
+        def send_command():
+            try:
+                api_command = f"api {hostname} bw '[\"{new_bw}\"]'\n"
+                self.shell.send(api_command)
+                time.sleep(2)
+                output = ""
+                while self.shell.recv_ready():
+                    output += self.shell.recv(1000).decode()
+
+                lines = output.strip().split('\n')
+                for line in lines:
+                    line = line.strip()
+                    if line:
+                        if line == '[""]':
+                            self.status_label.configure(text=f"Bandwidth set to {new_bw} MHz.")
+                            break
+                        elif re.match(r'\["\d+(\.\d+)?"\]', line):
+                            current_bw = re.findall(r'\d+(\.\d+)?', line)[0]
+                            self.status_label.configure(text=f"Current bandwidth: {current_bw} MHz")
+                            break
+                        elif "error" in line.lower():
+                            self.status_label.configure(text=f"Error: {line}")
+                            break
+                else:
+                    self.status_label.configure(text=f'Bandwidth set to {new_bw} MHz')
+            except Exception as e:
+                self.status_label.configure(text=f"Error: {str(e)}")
+            finally:
+                self.set_bw_button.configure(state="normal")
+
+        threading.Thread(target=send_command, daemon=True).start()
+
+    def set_encryption(self):
+        encryption_state = self.encryption_dropdown.get()
+        self.status_label.configure(text="Setting encryption...")
+        self.set_encryption_button.configure(state="disabled")
+
+        def send_command():
+            try:
+                # Convert "On" to "1" and "Off" to "0"
+                encryption_value = "0" if encryption_state == "On" else "1"
+                api_command = f"api {hostname} enc_disable '[\"{encryption_value}\"]'\n"
+                api_command_confirm = f"api {hostname} enc_disable_confirm '[\"{encryption_value}\"]'\n"
+                self.shell.send(api_command)
+                print(api_command)
+                self.shell.send(api_command_confirm)
+                print(api_command_confirm)
+                time.sleep(2)
+                output = ""
+                while self.shell.recv_ready():
+                    output += self.shell.recv(1000).decode()
+
+                lines = output.strip().split('\n')
+                for line in lines:
+                    line = line.strip()
+                    if line:
+                        if line == '[""]':
+                            self.status_label.configure(text=f"Encryption set to {encryption_state}.")
+                            break
+                        elif re.match(r'\["[01]"\]', line):
+                            current_encryption = "On" if line == '["1"]' else "Off"
+                            self.status_label.configure(text=f"Current encryption: {current_encryption}")
+                            break
+                        elif "error" in line.lower():
+                            self.status_label.configure(text=f"Error: {line}")
+                            break
+                else:
+                    self.status_label.configure(text=f'Encryption set to {encryption_state}')
+            except Exception as e:
+                self.status_label.configure(text=f"Error: {str(e)}")
+            finally:
+                self.set_encryption_button.configure(state="normal")
+
+        threading.Thread(target=send_command, daemon=True).start()
+    def set_frequency(self):
+        new_freq = self.freq_entry.get()
+        self.status_label.configure(text="Setting frequency...")
+        self.set_freq_button.configure(state="disabled")
+
+        def send_command():
+            try:
+                api_command = f"api {hostname} freq '[\"{new_freq}\"]'\n"
+                self.shell.send(api_command)
+                time.sleep(2)
+                output = ""
+                while self.shell.recv_ready():
+                    output += self.shell.recv(1000).decode()
+
+                lines = output.strip().split('\n')
+                for line in lines:
+                    line = line.strip()
+                    if line:
+                        if line == '[""]':
+                            self.status_label.configure(text=f"Frequency set to {new_freq} MHz.")
+                            break
+                        elif re.match(r'\["\d+(\.\d+)?"\]', line):
+                            current_freq = re.findall(r'\d+(\.\d+)?', line)[0]
+                            self.status_label.configure(text=f"Current frequency: {current_freq} MHz")
+                            break
+                        elif "error" in line.lower():
+                            self.status_label.configure(text=f"Error: {line}")
+                            break
+                else:
+                    self.status_label.configure(text=f'Frequency set to {new_freq} MHz')
+            except Exception as e:
+                self.status_label.configure(text=f"Error: {str(e)}")
+            finally:
+                self.set_freq_button.configure(state="normal")
+
+        threading.Thread(target=send_command, daemon=True).start()
+    def set_max_link_distance(self):
+        new_distance = self.distance_entry.get()
+        self.status_label.configure(text="Setting max link distance...")
+        self.set_distance_button.configure(state="disabled")
+
+        def send_command():
+            try:
+                api_command = f"api {hostname} max_link_distance '[\"{new_distance}\"]'\n"
+                self.shell.send(api_command)
+                time.sleep(2)
+                output = ""
+                while self.shell.recv_ready():
+                    output += self.shell.recv(1000).decode()
+
+                lines = output.strip().split('\n')
+                for line in lines:
+                    line = line.strip()
+                    if line:
+                        if line == '[""]':
+                            self.status_label.configure(text=f"Max link distance set to {new_distance} meters")
+                            break
+                        elif re.match(r'\["\d+(\.\d+)?"\]', line):
+                            current_distance = re.findall(r'\d+(\.\d+)?', line)[0]
+                            self.status_label.configure(text=f"Current max link distance: {current_distance} meters")
+                            break
+                        elif "error" in line.lower():
+                            self.status_label.configure(text=f"Error: {line}")
+                            break
+                else:
+                    self.status_label.configure(text=f'Max link distance set to {new_distance} meters')
+            except Exception as e:
+                self.status_label.configure(text=f"Error: {str(e)}")
+            finally:
+                self.set_distance_button.configure(state="normal")
+
+        threading.Thread(target=send_command, daemon=True).start()
+
+    def set_power(self):
+        power_setting = self.power_dropdown.get()
+        new_power = self.power_map[power_setting]
+        self.status_label.configure(text="Setting transmit power...")
+        self.set_power_button.configure(state="disabled")
+
+        def send_command():
+            try:
+                if power_setting == "Enable Max Power":
+                    api_command_1 = f"api {hostname} enable_max_power '[\"1\"]' \n "
+                    self.shell.send(api_command_1)
+                    time.sleep(2)
+                    output = ""
+                    while self.shell.recv_ready():
+                        output += self.shell.recv(1000).decode()
+
+                    lines = output.strip().split('\n')
+                    for line in lines:
+                        line = line.strip()
+                        if line:
+                            if line == '[""]':
+                                self.status_label.configure(text=f"Transmit power set to Max Power")
+                                break
+                            elif re.match(r'\["\d+"\]', line):
+                                current_power = re.findall(r'\d+', line)[0]
+                                current_setting = next((k for k, v in self.power_map.items() if v == current_power), "Unknown")
+                                self.status_label.configure(text=f"Current transmit power: {current_setting} ({current_power} dBm)")
+                                break
+                            elif "error" in line.lower():
+                                self.status_label.configure(text=f"Error: {line}")
+                                break
+                    else:
+                        self.status_label.configure(text=f'Transmit power set to {power_setting} ({new_power} dBm)')
+
+                elif power_setting == "High" or "Medium" or "Low":
+                    reset_power = f"api {hostname} enable_max_power '[\"0\"]'\n"
+                    api_command_2 = f"api {hostname } power_dBm '[\"{new_power}\"]'\n"
+                    self.shell.send(reset_power)
+                    self.shell.send(api_command_2)
+                    time.sleep(2)
+                    output = ""
+                    while self.shell.recv_ready():
+                        output += self.shell.recv(1000).decode()
+
+                    lines = output.strip().split('\n')
+                    for line in lines:
+                        line = line.strip()
+                        if line:
+                            if line == '[""]':
+                                self.status_label.configure(text=f"Transmit power set to {power_setting} ({new_power} dBm)")
+                                break
+                            elif re.match(r'\["\d+"\]', line):
+                                current_power = re.findall(r'\d+', line)[0]
+                                current_setting = next((k for k, v in self.power_map.items() if v == current_power), "Unknown")
+                                self.status_label.configure(text=f"Current transmit power: {current_setting} ({current_power} dBm)")
+                                break
+                            elif "error" in line.lower():
+                                self.status_label.configure(text=f"Error: {line}")
+                                break
+                    else:
+                        self.status_label.configure(text=f'Transmit power set to {power_setting} ({new_power} dBm)')
+            except Exception as e:
+                self.status_label.configure(text=f"Error: {str(e)}")
+            finally:
+                self.set_power_button.configure(state="normal")
+
+        threading.Thread(target=send_command, daemon=True).start()
+
+if __name__ == "__main__":
+    app = StreamCasterApp()
+    app.mainloop()
